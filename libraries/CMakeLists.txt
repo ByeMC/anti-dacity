@@ -7,6 +7,14 @@ set( LIBRARIES
    lib-strings
    lib-utility
    lib-uuid
+   lib-components
+   lib-basic-ui
+   lib-exceptions
+   lib-preferences
+   lib-math
+   lib-files
+   lib-registries
+   lib-xml
 )
 
 if ( ${_OPT}has_networking )

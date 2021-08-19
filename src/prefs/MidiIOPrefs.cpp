@@ -34,9 +34,9 @@ other settings.
 #include <wx/intl.h>
 #include <wx/textctrl.h>
 
-#include "../../lib-src/portmidi/pm_common/portmidi.h"
+#include <portmidi.h>
 
-#include "../Prefs.h"
+#include "Prefs.h"
 #include "../ShuttleGui.h"
 #include "../widgets/AudacityMessageBox.h"
 

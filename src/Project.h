@@ -22,6 +22,7 @@
 
 class wxFrame;
 class wxWindow;
+namespace BasicUI { class WindowPlacement; }
 
 class AudacityProject;
 
@@ -176,10 +177,21 @@ inline const wxFrame *FindProjectFrame( const AudacityProject *project ) {
    return project ? &GetProjectFrame( *project ) : nullptr;
 }
 
+//! Make a WindowPlacement object suitable for `project` (which may be null)
+/*! @post return value is not null */
+AUDACITY_DLL_API std::unique_ptr<const BasicUI::WindowPlacement>
+ProjectFramePlacement( AudacityProject *project );
+
 ///\brief Get the main sub-window of the project frame that displays track data
 // (as a wxWindow only, when you do not need to use the subclass TrackPanel)
 AUDACITY_DLL_API wxWindow &GetProjectPanel( AudacityProject &project );
 AUDACITY_DLL_API const wxWindow &GetProjectPanel(
    const AudacityProject &project );
+
+// Generate a registry for serialized data attached to the project
+#include "XMLMethodRegistry.h"
+class AudacityProject;
+using ProjectFileIORegistry = XMLMethodRegistry<AudacityProject>;
+DECLARE_XML_METHOD_REGISTRY( AUDACITY_DLL_API, ProjectFileIORegistry );
 
 #endif

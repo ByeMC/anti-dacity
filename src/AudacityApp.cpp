@@ -82,6 +82,7 @@ It handles initialization and termination by subclassing wxApp.
 #include "commands/AppCommandEvent.h"
 #include "widgets/ASlider.h"
 #include "FFmpeg.h"
+#include "Journal.h"
 //#include "LangChoice.h"
 #include "Languages.h"
 #include "Menus.h"
@@ -97,6 +98,7 @@ It handles initialization and termination by subclassing wxApp.
 #include "ProjectWindow.h"
 #include "Screenshot.h"
 #include "Sequence.h"
+#include "SelectFile.h"
 #include "TempDirectory.h"
 #include "Track.h"
 #include "prefs/PrefsDialog.h"
@@ -109,9 +111,10 @@ It handles initialization and termination by subclassing wxApp.
 #include "prefs/DirectoriesPrefs.h"
 #include "prefs/GUIPrefs.h"
 #include "tracks/ui/Scrubbing.h"
-#include "widgets/FileConfig.h"
+#include "FileConfig.h"
 #include "widgets/FileHistory.h"
 #include "update/UpdateManager.h"
+#include "widgets/wxWidgetsBasicUI.h"
 
 #ifdef HAS_NETWORKING
 #include "NetworkManager.h"
@@ -241,7 +244,7 @@ void PopulatePreferences()
          wxYES_NO, NULL);
       if (action == wxYES)   // reset
       {
-         gPrefs->DeleteAll();
+         ResetPreferences();
          writeLang = true;
       }
    }
@@ -792,6 +795,8 @@ void AudacityApp::MacNewFile()
 #define kAudacityAppTimerID 0
 
 BEGIN_EVENT_TABLE(AudacityApp, wxApp)
+   EVT_IDLE( AudacityApp::OnIdle )
+
    EVT_QUERY_END_SESSION(AudacityApp::OnQueryEndSession)
    EVT_END_SESSION(AudacityApp::OnEndSession)
 
@@ -984,10 +989,9 @@ bool AudacityApp::OnExceptionInMainLoop()
 
       // Use CallAfter to delay this to the next pass of the event loop,
       // rather than risk doing it inside stack unwinding.
-      auto pProject = ::GetActiveProject();
+      auto pProject = ::GetActiveProject()->shared_from_this();
       auto pException = std::current_exception();
-      CallAfter( [=]      // Capture pException by value!
-      {
+      CallAfter( [pException, pProject] {
 
          // Restore the state of the project to what it was before the
          // failed operation
@@ -1057,6 +1061,12 @@ bool AudacityApp::OnInit()
    // Ensure we have an event loop during initialization
    wxEventLoopGuarantor eventLoop;
 
+   // Inject basic GUI services behind the facade
+   {
+      static wxWidgetsBasicUI uiServices;
+      (void)BasicUI::Install(&uiServices);
+   }
+
    // Fire up SQLite
    if ( !ProjectFileIO::InitializeSQL() )
       this->CallAfter([]{
@@ -1110,20 +1120,10 @@ bool AudacityApp::OnInit()
                        "widget_class \"*GtkCombo*\" style \"audacity\"");
 #endif
 
-   // Don't use AUDACITY_NAME here.
-   // We want Audacity with a capital 'A'
-
-// DA: App name
-#ifndef EXPERIMENTAL_DA
-   wxString appName = wxT("Audacity");
-#else
-   wxString appName = wxT("DarkAudacity");
-#endif
-
-   wxTheApp->SetAppName(appName);
+   wxTheApp->SetAppName(AppName);
    // Explicitly set since OSX will use it for the "Quit" menu item
-   wxTheApp->SetAppDisplayName(appName);
-   wxTheApp->SetVendorName(appName);
+   wxTheApp->SetAppDisplayName(AppName);
+   wxTheApp->SetVendorName(AppName);
 
    ::wxInitAllImageHandlers();
 
@@ -1363,7 +1363,7 @@ bool AudacityApp::InitPart2()
    // Parse command line and handle options that might require
    // immediate exit...no need to initialize all of the audio
    // stuff to display the version string.
-   std::shared_ptr< wxCmdLineParser > parser{ ParseCommandLine().release() };
+   std::shared_ptr< wxCmdLineParser > parser{ ParseCommandLine() };
    if (!parser)
    {
       // Either user requested help or a parsing error occurred
@@ -1387,6 +1387,10 @@ bool AudacityApp::InitPart2()
 
       Sequence::SetMaxDiskBlockSize(lval);
    }
+
+   wxString fileName;
+   if (parser->Found(wxT("j"), &fileName))
+      Journal::SetInputFileName( fileName );
 
    // BG: Create a temporary window to set as the top window
    wxImage logoimage((const char **)AudacityLogoWithName_xpm);
@@ -1469,6 +1473,11 @@ bool AudacityApp::InitPart2()
 #endif //__WXMAC__
       temporarywindow.Show(false);
    }
+
+   // Must do this before creating the first project, else the early exit path
+   // may crash
+   if ( !Journal::Begin( FileNames::DataDir() ) )
+      return false;
 
    // Workaround Bug 1377 - Crash after Audacity starts and low disk space warning appears
    // The temporary splash window is closed AND cleaned up, before attempting to create
@@ -1596,6 +1605,32 @@ bool AudacityApp::InitPart2()
 #endif
 
    return TRUE;
+}
+
+int AudacityApp::OnRun()
+{
+   // Returns 0 to the command line if the run completed normally
+   auto result = wxApp::OnRun();
+   if (result == 0)
+      // If not otherwise abnormal, report any journal sync failure
+      result = Journal::GetExitCode();
+   return result;
+}
+
+void AudacityApp::OnIdle( wxIdleEvent &evt )
+{
+   evt.Skip();
+   try {
+      if ( Journal::Dispatch() )
+         evt.RequestMore();
+   }
+   catch( ... ) {
+      // Hmm, wxWidgets doesn't guard calls to the idle handler as for other
+      // events.  So replicate some of the try-catch logic here.
+      OnExceptionInMainLoop();
+      // Fall through and return, allowing delayed handler action of
+      // AudacityException to clean up
+   }
 }
 
 void AudacityApp::InitCommandHandler()
@@ -2148,6 +2183,14 @@ std::unique_ptr<wxCmdLineParser> AudacityApp::ParseCommandLine()
    parser->AddOption(wxT("b"), wxT("blocksize"), _("set max disk block size in bytes"),
                      wxCMD_LINE_VAL_NUMBER);
 
+   const auto journalOptionDescription =
+   /*i18n-hint: brief help message for Audacity's command-line options
+     A journal contains a sequence of user interface interactions to be repeated
+     "log," "trail," "trace" have somewhat similar meanings */
+      _("replay a journal file");
+
+   parser->AddOption(wxT("j"), wxT("journal"), journalOptionDescription);
+
    /*i18n-hint: This displays a list of available options */
    parser->AddSwitch(wxT("h"), wxT("help"), _("this help message"),
                      wxCMD_LINE_OPTION_HELP);
@@ -2236,16 +2279,16 @@ int AudacityApp::OnExit()
 
    DeinitFFT();
 
+#ifdef HAS_NETWORKING
+   audacity::network_manager::NetworkManager::GetInstance().Terminate();
+#endif
+
    AudioIO::Deinit();
 
    MenuTable::DestroyRegistry();
 
    // Terminate the PluginManager (must be done before deleting the locale)
    PluginManager::Get().Terminate();
-
-#ifdef HAS_NETWORKING
-   audacity::network_manager::NetworkManager::GetInstance().Terminate();
-#endif
 
    return 0;
 }

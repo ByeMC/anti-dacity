@@ -15,7 +15,7 @@
 
 
 #include "SampleFormat.h"
-#include "xml/XMLTagHandler.h"
+#include "XMLTagHandler.h"
 
 #include <wx/longlong.h>
 
@@ -25,6 +25,7 @@
 class BlockArray;
 class Envelope;
 class ProgressDialog;
+class sampleCount;
 class SampleBlock;
 class SampleBlockFactory;
 using SampleBlockFactoryPtr = std::shared_ptr<SampleBlockFactory>;

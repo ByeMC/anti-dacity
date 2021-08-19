@@ -36,6 +36,7 @@ Paul Licameli split from TrackPanel.cpp
 #include "UserException.h"
 #include "Identifier.h"
 
+#include <wx/app.h>
 #include <wx/combobox.h>
 #include <wx/frame.h>
 #include <wx/sizer.h>
@@ -843,8 +844,8 @@ void WaveTrackMenuTable::OnMergeStereo(wxCommandEvent &)
    view.SetMinimized(false);
    partnerView.SetMinimized(false);
    int AverageHeight = (view.GetHeight() + partnerView.GetHeight()) / 2;
-   view.SetHeight(AverageHeight);
-   partnerView.SetHeight(AverageHeight);
+   view.SetExpandedHeight(AverageHeight);
+   partnerView.SetExpandedHeight(AverageHeight);
    view.SetMinimized(bBothMinimizedp);
    partnerView.SetMinimized(bBothMinimizedp);
 
@@ -879,7 +880,7 @@ void WaveTrackMenuTable::SplitStereo(bool stereo)
 
       //make sure no channel is smaller than its minimum height
       if (view.GetHeight() < view.GetMinimizedHeight())
-         view.SetHeight(view.GetMinimizedHeight());
+         view.SetExpandedHeight(view.GetMinimizedHeight());
       totalHeight += view.GetHeight();
       ++nChannels;
    }
@@ -889,7 +890,7 @@ void WaveTrackMenuTable::SplitStereo(bool stereo)
 
    for (auto channel : channels)
       // Make tracks the same height
-      TrackView::Get( *channel ).SetHeight( averageHeight );
+      TrackView::Get( *channel ).SetExpandedHeight( averageHeight );
 }
 
 /// Swap the left and right channels of a stero track...
@@ -1252,19 +1253,16 @@ void WaveTrackControls::ReCreatePanSlider( wxEvent &event )
 }
 
 using DoGetWaveTrackControls = DoGetControls::Override< WaveTrack >;
-template<> template<> auto DoGetWaveTrackControls::Implementation() -> Function {
+DEFINE_ATTACHED_VIRTUAL_OVERRIDE(DoGetWaveTrackControls) {
    return [](WaveTrack &track) {
       return std::make_shared<WaveTrackControls>( track.SharedPointer() );
    };
 }
-static DoGetWaveTrackControls registerDoGetWaveTrackControls;
 
 using GetDefaultWaveTrackHeight = GetDefaultTrackHeight::Override< WaveTrack >;
-template<> template<>
-auto GetDefaultWaveTrackHeight::Implementation() -> Function {
+DEFINE_ATTACHED_VIRTUAL_OVERRIDE(GetDefaultWaveTrackHeight) {
    return [](WaveTrack &) {
       return WaveTrackControls::DefaultWaveTrackHeight();
    };
 }
-static GetDefaultWaveTrackHeight registerGetDefaultWaveTrackHeight;
 

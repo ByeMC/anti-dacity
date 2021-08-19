@@ -19,11 +19,12 @@
 #include <vector>
 #include <list>
 #include <functional>
+#include <wx/event.h> // to inherit wxCommandEvent
 #include <wx/longlong.h>
 
 #include "ClientData.h"
 #include "SampleFormat.h"
-#include "xml/XMLTagHandler.h"
+#include "XMLTagHandler.h"
 
 #ifdef __WXMSW__
 #pragma warning(disable:4284)
@@ -260,11 +261,13 @@ class AUDACITY_DLL_API Track /* not final */
 
    //! Alias for my base type
    using AttachedObjects = ::AttachedTrackObjects;
-   using ChannelType = XMLValueChecker::ChannelType;
 
-   static const auto LeftChannel = XMLValueChecker::LeftChannel;
-   static const auto RightChannel = XMLValueChecker::RightChannel;
-   static const auto MonoChannel = XMLValueChecker::MonoChannel;
+   enum ChannelType
+   {
+      LeftChannel = 0,
+      RightChannel = 1,
+      MonoChannel = 2
+   };
    
    TrackId GetId() const { return mId; }
  private:

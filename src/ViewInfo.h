@@ -17,6 +17,7 @@
 #include <wx/weakref.h> // member variable
 #include "SelectedRegion.h"
 #include <memory>
+#include "XMLMethodRegistry.h"
 #include "ZoomInfo.h" // to inherit
 
 
@@ -57,9 +58,9 @@ public:
        const wxChar *legacyT0Name, const wxChar *legacyT1Name) const
    { mRegion.WriteXMLAttributes(xmlFile, legacyT0Name, legacyT1Name); }
 
-   bool HandleXMLAttribute
-      (const wxChar *attr, const wxChar *value,
-       const wxChar *legacyT0Name, const wxChar *legacyT1Name);
+   //! Return some information used for deserialization purposes by ViewInfo
+   static XMLMethodRegistryBase::Mutators<NotifyingSelectedRegion>
+      Mutators(const wxString &legacyT0Name, const wxString &legacyT1Name);
 
    // const-only access allows assignment from this into a SelectedRegion
    // or otherwise passing it into a function taking const SelectedRegion&
@@ -98,13 +99,8 @@ private:
    SelectedRegion mRegion;
 };
 
-// See big pictorial comment in TrackPanel.cpp for explanation of these numbers
 enum : int {
-   // constants related to y coordinates in the track panel
-   kTopInset = 4,
-   kTopMargin = kTopInset + kBorderThickness,
-   kBottomMargin = kShadowThickness + kBorderThickness,
-   kSeparatorThickness = kBottomMargin + kTopMargin,
+   kVerticalPadding = 7, /*!< Width of padding below each channel group */
 };
 
 enum : int {
@@ -225,10 +221,11 @@ public:
    bool bAdjustSelectionEdges;
 
    void WriteXMLAttributes(XMLWriter &xmlFile) const;
-   bool ReadXMLAttribute(const wxChar *attr, const wxChar *value);
 
 private:
    int mHeight{ 0 };
+
+   struct ProjectFileIORegistration;
 };
 
 #endif

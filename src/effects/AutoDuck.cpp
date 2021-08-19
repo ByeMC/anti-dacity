@@ -29,7 +29,7 @@
 
 #include "../AColor.h"
 #include "../AllThemeResources.h"
-#include "../Prefs.h"
+#include "Prefs.h"
 #include "../Shuttle.h"
 #include "../ShuttleGui.h"
 #include "../Theme.h"
@@ -301,7 +301,7 @@ bool EffectAutoDuck::Process()
    threshold = threshold * threshold * kRMSWindowSize;
 
    int rmsPos = 0;
-   float rmsSum = 0;
+   double rmsSum = 0;
    // to make the progress bar appear more natural, we first look for all
    // duck regions and apply them all at once afterwards
    std::vector<AutoDuckRegion> regions;

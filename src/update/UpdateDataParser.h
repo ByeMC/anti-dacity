@@ -10,7 +10,7 @@
 
 #include "VersionPatch.h"
 
-#include "xml/XMLTagHandler.h"
+#include "XMLTagHandler.h"
 
 #include <wx/arrstr.h>
 #include <map>
@@ -36,7 +36,8 @@ private:
         kUpdateTag,
         kDescriptionTag,
         kOsTag,
-        kWindowsTag,
+        kWin32Tag,
+        kWin64Tag,
         kMacosTag,
         kLinuxTag,
         kVersionTag,
@@ -48,7 +49,8 @@ private:
         { XmlParsedTags::kUpdateTag, wxT("Updates") },
         { XmlParsedTags::kDescriptionTag, wxT("Description") },
         { XmlParsedTags::kOsTag, wxT("OS") },
-        { XmlParsedTags::kWindowsTag, wxT("Windows") },
+        { XmlParsedTags::kWin32Tag, wxT("Win32") },
+        { XmlParsedTags::kWin64Tag, wxT("Win64") },
         { XmlParsedTags::kMacosTag, wxT("Macos") },
         { XmlParsedTags::kLinuxTag, wxT("Linux") },
         { XmlParsedTags::kVersionTag, wxT("Version") },

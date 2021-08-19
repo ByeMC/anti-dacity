@@ -49,18 +49,44 @@ public:
    bool GetMinimized() const { return mMinimized; }
    void SetMinimized( bool minimized );
 
-   int GetY() const { return mY; }
-   int GetActualHeight() const { return mHeight; }
+   //! @return cached sum of `GetHeight()` of all preceding tracks
+   int GetCumulativeHeightBefore() const { return mY; }
+
+   //! @return height of the track when expanded
+   /*! See other comments for GetHeight */
+   int GetExpandedHeight() const { return mHeight; }
+
+   //! @return height of the track when collapsed
+   /*! See other comments for GetHeight */
    virtual int GetMinimizedHeight() const = 0;
+
+   //! @return height of the track as it now appears, expanded or collapsed
+   /*!
+    Total "height" of channels of a track includes padding areas above and
+    below it, and is pixel-accurate for the channel group.
+    The "heights" of channels within a group determine the proportions of
+    heights of the track data shown -- but the actual total pixel heights
+    may differ when other fixed-height adornments and paddings are added,
+    according to other rules for allocation of height.
+   */
    int GetHeight() const;
 
-   void SetY(int y) { DoSetY( y ); }
-   void SetHeight(int height);
+   //! Set cached value dependent on position within the track list
+   void SetCumulativeHeightBefore(int y) { DoSetY( y ); }
+
+   /*! Sets height for expanded state.
+    Does not expand a track if it is now collapsed.
+    See other comments for GetHeight
+    */
+   void SetExpandedHeight(int height);
 
    // Return another, associated TrackPanelCell object that implements the
    // mouse actions for the vertical ruler
    std::shared_ptr<TrackVRulerControls> GetVRulerControls();
    std::shared_ptr<const TrackVRulerControls> GetVRulerControls() const;
+
+   // by default returns nullptr, meaning that track has no drag controls area
+   std::shared_ptr<CommonTrackCell> GetAffordanceControls();
 
 
    void WriteXMLAttributes( XMLWriter & ) const override;
@@ -78,18 +104,23 @@ public:
 
    virtual void DoSetMinimized( bool isMinimized );
 
-protected:
+private:
 
    // No need yet to make this virtual
    void DoSetY(int y);
 
    void DoSetHeight(int h);
 
+protected:
+
    // Private factory to make appropriate object; class TrackView handles
    // memory management thereafter
    virtual std::shared_ptr<TrackVRulerControls> DoGetVRulerControls() = 0;
+   // May return nullptr (which is default) if track does not need affordance area
+   virtual std::shared_ptr<CommonTrackCell> DoGetAffordanceControls();
 
    std::shared_ptr<TrackVRulerControls> mpVRulerControls;
+   std::shared_ptr<CommonTrackCell> mpAffordanceCellControl;
 
 private:
    bool           mMinimized{ false };
@@ -97,7 +128,7 @@ private:
    int            mHeight{ DefaultHeight };
 };
 
-#include "../../AttachedVirtualFunction.h"
+#include "AttachedVirtualFunction.h"
 
 struct DoGetViewTag;
 
@@ -107,6 +138,7 @@ AttachedVirtualFunction<
    std::shared_ptr< TrackView >,
    Track
 >;
+DECLARE_EXPORTED_ATTACHED_VIRTUAL(AUDACITY_DLL_API, DoGetView);
 
 struct GetDefaultTrackHeightTag;
 
@@ -116,5 +148,6 @@ AttachedVirtualFunction<
    int,
    Track
 >;
+DECLARE_EXPORTED_ATTACHED_VIRTUAL(AUDACITY_DLL_API, GetDefaultTrackHeight);
 
 #endif

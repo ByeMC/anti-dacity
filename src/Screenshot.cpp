@@ -20,6 +20,7 @@ It forwards the actual work of doing the commands to the ScreenshotCommand.
 #include "commands/ScreenshotCommand.h"
 #include "commands/CommandTargets.h"
 #include "commands/CommandContext.h"
+#include <wx/app.h>
 #include <wx/defs.h>
 #include <wx/event.h>
 #include <wx/frame.h>
@@ -792,7 +793,7 @@ void ScreenshotBigDialog::SizeTracks(int h)
       auto nChannels = channels.size();
       auto height = nChannels == 1 ? 2 * h : h;
       for (auto channel : channels)
-         TrackView::Get( *channel ).SetHeight(height);
+         TrackView::Get( *channel ).SetExpandedHeight(height);
    }
    ProjectWindow::Get( mContext.project ).RedrawProject();
 }
@@ -801,7 +802,7 @@ void ScreenshotBigDialog::OnShortTracks(wxCommandEvent & WXUNUSED(event))
 {
    for (auto t : TrackList::Get( mContext.project ).Any<WaveTrack>()) {
       auto &view = TrackView::Get( *t );
-      view.SetHeight( view.GetMinimizedHeight() );
+      view.SetExpandedHeight( view.GetMinimizedHeight() );
    }
 
    ProjectWindow::Get( mContext.project ).RedrawProject();

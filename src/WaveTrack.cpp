@@ -45,7 +45,7 @@ from the project that will own the track.
 #include "Envelope.h"
 #include "Sequence.h"
 
-#include "ProjectFileIORegistry.h"
+#include "Project.h"
 #include "ProjectSettings.h"
 
 #include "Prefs.h"
@@ -64,7 +64,7 @@ from the project that will own the track.
 
 using std::max;
 
-static ProjectFileIORegistry::Entry registerFactory{
+static ProjectFileIORegistry::ObjectReaderEntry readerEntry{
    wxT( "wavetrack" ),
    []( AudacityProject &project ){
       auto &trackFactory = WaveTrackFactory::Get( project );
@@ -179,8 +179,6 @@ void WaveTrack::Reinit(const WaveTrack &orig)
       else
          mpWaveformSettings.reset();
    }
-
-   this->SetOffset(orig.GetOffset());
 }
 
 void WaveTrack::Merge(const Track &orig)
@@ -1616,6 +1614,13 @@ void WaveTrack::Flush()
    RightmostOrNewClip()->Flush();
 }
 
+namespace {
+bool IsValidChannel(const int nValue)
+{
+   return (nValue >= Track::LeftChannel) && (nValue <= Track::MonoChannel);
+}
+}
+
 bool WaveTrack::HandleXMLTag(const wxChar *tag, const wxChar **attrs)
 {
    if (!wxStrcmp(tag, wxT("wavetrack"))) {
@@ -1663,7 +1668,7 @@ bool WaveTrack::HandleXMLTag(const wxChar *tag, const wxChar **attrs)
          else if (!wxStrcmp(attr, wxT("channel")))
          {
             if (!XMLValueChecker::IsGoodInt(strValue) || !strValue.ToLong(&nValue) ||
-                  !XMLValueChecker::IsValidChannel(nValue))
+                  !IsValidChannel(nValue))
                return false;
             mChannel = static_cast<Track::ChannelType>( nValue );
          }
@@ -1678,7 +1683,7 @@ bool WaveTrack::HandleXMLTag(const wxChar *tag, const wxChar **attrs)
          else if (!wxStrcmp(attr, wxT("sampleformat")) &&
                   XMLValueChecker::IsGoodInt(strValue) &&
                   strValue.ToLong(&nValue) &&
-                  XMLValueChecker::IsValidSampleFormat(nValue))
+                  Sequence::IsValidSampleFormat(nValue))
             mFormat = static_cast<sampleFormat>(nValue);
       } // while
       return true;
@@ -2143,18 +2148,18 @@ Sequence* WaveTrack::GetSequenceAtTime(double time)
       return NULL;
 }
 
-WaveClip* WaveTrack::CreateClip()
+WaveClip* WaveTrack::CreateClip(double offset)
 {
-   mClips.push_back(std::make_unique<WaveClip>(mpFactory, mFormat, mRate, GetWaveColorIndex()));
-   return mClips.back().get();
+   mClips.emplace_back(std::make_shared<WaveClip>(mpFactory, mFormat, mRate, GetWaveColorIndex()));
+   auto clip = mClips.back().get();
+   clip->SetOffset(offset);
+   return clip;
 }
 
 WaveClip* WaveTrack::NewestOrNewClip()
 {
    if (mClips.empty()) {
-      WaveClip *clip = CreateClip();
-      clip->SetOffset(mOffset);
-      return clip;
+      return CreateClip(mOffset);
    }
    else
       return mClips.back().get();
@@ -2164,9 +2169,7 @@ WaveClip* WaveTrack::NewestOrNewClip()
 WaveClip* WaveTrack::RightmostOrNewClip()
 {
    if (mClips.empty()) {
-      WaveClip *clip = CreateClip();
-      clip->SetOffset(mOffset);
-      return clip;
+      return CreateClip(mOffset);
    }
    else
    {

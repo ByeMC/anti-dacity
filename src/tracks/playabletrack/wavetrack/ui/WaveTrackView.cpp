@@ -31,6 +31,7 @@ Paul Licameli split from TrackPanel.cpp
 #include "../../../../TrackArtist.h"
 #include "../../../../TrackPanelDrawingContext.h"
 #include "../../../../TrackPanelMouseEvent.h"
+#include "../../../../TrackPanelResizeHandle.h"
 #include "../../../../ViewInfo.h"
 #include "../../../../prefs/TracksPrefs.h"
 
@@ -38,7 +39,10 @@ Paul Licameli split from TrackPanel.cpp
 #include "../../../ui/ButtonHandle.h"
 #include "../../../../TrackInfo.h"
 
+#include "WaveTrackAffordanceControls.h"
+
 namespace {
+
 
 using WaveTrackSubViewPtrs = std::vector< std::shared_ptr< WaveTrackSubView > >;
 
@@ -700,6 +704,49 @@ std::pair<
          mCloseHandle,
          *pWaveTrackView, *this, state ) )
          results.second.push_back( pHandle );
+
+      auto channels = TrackList::Channels(wt.get());
+      if(channels.size() > 1) {
+         // Only one cell is tested and we need to know
+         // which one and it's relative location to the border.
+         auto subviews = pWaveTrackView->GetSubViews();
+         auto currentSubview = std::find_if(subviews.begin(), subviews.end(), 
+            [self = shared_from_this()](const auto& p){
+               return self == p.second;
+         });
+         if (currentSubview != subviews.end())
+         {
+            auto currentSubviewIndex = std::distance(subviews.begin(), currentSubview);
+            
+            const auto py = state.state.GetY();
+            const auto topBorderHit = std::abs(py - state.rect.GetTop())
+               <= WaveTrackView::kChannelSeparatorThickness / 2;
+            const auto bottomBorderHit = std::abs(py - state.rect.GetBottom())
+               <= WaveTrackView::kChannelSeparatorThickness / 2;
+
+            auto currentChannel = channels.find(wt.get());
+            auto currentChannelIndex = std::distance(channels.begin(), currentChannel);
+
+            if (//for not-last-view check the bottom border hit
+               ((currentChannelIndex != channels.size() - 1)
+                  && (currentSubviewIndex == static_cast<int>(subviews.size()) - 1)
+                  && bottomBorderHit)
+               ||
+               //or for not-first-view check the top border hit
+               ((currentChannelIndex != 0) && currentSubviewIndex == 0 && topBorderHit))
+            {
+               //depending on which border hit test succeeded on we
+               //need to choose a proper target for resizing
+               auto it = bottomBorderHit ? currentChannel : currentChannel.advance(-1);
+               auto result = std::static_pointer_cast<UIHandle>(
+                  std::make_shared<TrackPanelResizeHandle>((*it)->shared_from_this(), py)
+               );
+               result = AssignUIHandlePtr(mResizeHandle, result);
+               results.second.push_back(result);
+            }
+         }
+      }
+
       if ( auto pHandle = SubViewAdjustHandle::HitTest(
          mAdjustHandle,
          *pWaveTrackView, *this, state ) )
@@ -758,6 +805,11 @@ void WaveTrackSubView::DrawBoldBoundaries(
          AColor::Line(dc, (int) (rect.x + xx + 1), rect.y, (int) (rect.x + xx + 1), rect.y + rect.height);
       }
    }
+}
+
+std::weak_ptr<WaveTrackView> WaveTrackSubView::GetWaveTrackView() const
+{
+   return mwWaveTrackView;
 }
 
 WaveTrackView &WaveTrackView::Get( WaveTrack &track )
@@ -957,6 +1009,11 @@ void WaveTrackView::DoSetDisplay(Display display, bool exclusive)
 
 auto WaveTrackView::GetSubViews( const wxRect &rect ) -> Refinement
 {
+   return GetSubViews(&rect);
+}
+
+auto WaveTrackView::GetSubViews(const wxRect* rect) -> Refinement
+{
    BuildSubViews();
 
    // Collect the visible views in the right sequence
@@ -966,41 +1023,51 @@ auto WaveTrackView::GetSubViews( const wxRect &rect ) -> Refinement
    std::vector< Item > items;
    size_t ii = 0;
    float total = 0;
-   WaveTrackSubViews::ForEach( [&]( WaveTrackSubView &subView ){
-      auto &placement = mPlacements[ii];
+   WaveTrackSubViews::ForEach([&](WaveTrackSubView& subView) {
+      auto& placement = mPlacements[ii];
       auto index = placement.index;
       auto fraction = placement.fraction;
-      if ( index >= 0 && fraction > 0.0 )
+      if (index >= 0 && fraction > 0.0)
          total += fraction,
-         items.push_back( { index, fraction, subView.shared_from_this() } );
+         items.push_back({ index, fraction, subView.shared_from_this() });
       ++ii;
-   } );
-   std::sort( items.begin(), items.end(), [](const Item &a, const Item &b){
+   });
+   std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
       return a.index < b.index;
-   } );
+   });
 
    // Remove views we don't need
    auto begin = items.begin(), end = items.end(),
-     newEnd = std::remove_if( begin, end,
-        []( const Item &item ){ return !item.pView; } );
-   items.erase( newEnd, end );
+        newEnd = std::remove_if(begin, end,
+            [](const Item& item) { return !item.pView; });
+   items.erase(newEnd, end);
 
-   // Assign coordinates, redenominating to the total height,
-   // storing integer values
    Refinement results;
-   results.reserve( items.size() );
-   const auto top = rect.GetTop();
-   const auto height = rect.GetHeight();
-   float partial = 0;
-   wxCoord lastCoord = 0;
-   for ( const auto &item : items ) {
-      wxCoord newCoord = top + (partial / total) * height;
-      results.emplace_back( newCoord, item.pView );
-      partial += item.fraction;
-   }
 
-   // Cache for the use of sub-view dragging
-   mLastHeight = height;
+   if (rect != nullptr)
+   {
+      // Assign coordinates, redenominating to the total height,
+      // storing integer values
+      results.reserve(items.size());
+      const auto top = rect->GetTop();
+      const auto height = rect->GetHeight();
+      float partial = 0;
+      wxCoord lastCoord = 0;
+      for (const auto& item : items) {
+         wxCoord newCoord = top + (partial / total) * height;
+         results.emplace_back(newCoord, item.pView);
+         partial += item.fraction;
+      }
+
+      // Cache for the use of sub-view dragging
+      mLastHeight = height;
+   }
+   else
+   {
+      std::transform(items.begin(), items.end(), std::back_inserter(results), [](const auto& item) {
+         return std::make_pair(0, item.pView);
+      });
+   }
 
    return results;
 }
@@ -1018,6 +1085,11 @@ WaveTrackView::GetAllSubViews()
    return results;
 }
 
+std::shared_ptr<CommonTrackCell> WaveTrackView::DoGetAffordanceControls()
+{
+   return std::make_shared<WaveTrackAffordanceControls>(FindTrack());
+}
+
 void WaveTrackView::DoSetMinimized( bool minimized )
 {
    BuildSubViews();
@@ -1030,12 +1102,11 @@ void WaveTrackView::DoSetMinimized( bool minimized )
 }
 
 using DoGetWaveTrackView = DoGetView::Override< WaveTrack >;
-template<> template<> auto DoGetWaveTrackView::Implementation() -> Function {
+DEFINE_ATTACHED_VIRTUAL_OVERRIDE(DoGetWaveTrackView) {
    return [](WaveTrack &track) {
       return std::make_shared<WaveTrackView>( track.SharedPointer() );
    };
 }
-static DoGetWaveTrackView registerDoGetWaveTrackView;
 
 std::shared_ptr<TrackVRulerControls> WaveTrackView::DoGetVRulerControls()
 {
@@ -1229,20 +1300,23 @@ ClipParameters::ClipParameters
    }
 }
 
-void ClipParameters::DrawClipEdges( wxDC &dc, const wxRect &rect ) const
+wxRect ClipParameters::GetClipRect(const WaveClip& clip, const ZoomInfo& zoomInfo, const wxRect& viewRect, int clipOffsetX)
 {
-   // Draw clip edges
-   dc.SetPen(*wxGREY_PEN);
-   if (tpre < 0) {
-      AColor::Line(dc,
-                   mid.x - 1, mid.y,
-                   mid.x - 1, mid.y + rect.height);
-   }
-   if (tpost > t1) {
-      AColor::Line(dc,
-                   mid.x + mid.width, mid.y,
-                   mid.x + mid.width, mid.y + rect.height);
-   }
+    auto srs = 1. / static_cast<double>(clip.GetRate());
+    //to prevent overlap left and right most samples with frame border
+    auto margin = .25 * srs;
+    auto edgeLeft = static_cast<wxInt64>(viewRect.GetLeft());
+    auto edgeRight = static_cast<wxInt64>(viewRect.GetRight());
+    auto left = std::clamp(zoomInfo.TimeToPosition(clip.GetOffset() - margin, viewRect.x + clipOffsetX, true), edgeLeft, edgeRight);
+    auto right = std::clamp(zoomInfo.TimeToPosition(clip.GetEndTime() - srs + margin, viewRect.x + clipOffsetX, true), edgeLeft, edgeRight);
+    if (right - left > 0)
+    {
+        //after clamping we can expect that left and right 
+        //are small enough to be put into int
+        return wxRect(static_cast<int>(left), viewRect.y, static_cast<int>(right - left), viewRect.height);
+    }
+    //off the screen
+    return wxRect();
 }
 
 void WaveTrackView::Reparent( const std::shared_ptr<Track> &parent )
@@ -1252,6 +1326,17 @@ void WaveTrackView::Reparent( const std::shared_ptr<Track> &parent )
    WaveTrackSubViews::ForEach( [&parent](WaveTrackSubView &subView){
       subView.Reparent( parent );
    } );
+   if (mpAffordanceCellControl)
+      mpAffordanceCellControl->Reparent(parent);
+}
+
+std::weak_ptr<WaveClip> WaveTrackView::GetSelectedClip()
+{
+   if (auto affordance = std::dynamic_pointer_cast<WaveTrackAffordanceControls>(GetAffordanceControls()))
+   {
+      return affordance->GetSelectedClip();
+   }
+   return {};
 }
 
 void WaveTrackView::BuildSubViews() const

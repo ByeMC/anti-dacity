@@ -35,7 +35,7 @@ elif [[ "${AUDACITY_CMAKE_GENERATOR}" == Xcode* ]]; then
     )
 fi
 
-if [[ -n "${APPLE_CODESIGN_IDENTITY}" && "${OSTYPE}" == darwin* ]]; then
+if [[ -n "${APPLE_CODESIGN_IDENTITY-}" && "${OSTYPE}" == darwin* ]]; then
     cmake_args+=(
         -D APPLE_CODESIGN_IDENTITY="${APPLE_CODESIGN_IDENTITY}"
         -D audacity_perform_codesign=yes
@@ -48,7 +48,7 @@ if [[ -n "${APPLE_CODESIGN_IDENTITY}" && "${OSTYPE}" == darwin* ]]; then
             -D audacity_perform_notarization=yes
         )
     fi
-elif [[ -n "${WINDOWS_CERTIFICATE}" && "${OSTYPE}" == msys* ]]; then
+elif [[ -n "${WINDOWS_CERTIFICATE-}" && "${OSTYPE}" == msys* ]]; then
     # Windows certificate will be used from the environment
     cmake_args+=(
         -D audacity_perform_codesign=yes
@@ -58,11 +58,32 @@ fi
 if [[ ${GIT_BRANCH} == release* ]]; then
     cmake_args+=(
         -D audacity_package_manual=yes
+        -D AUDACITY_BUILD_LEVEL=2
     )
 fi
 
 # Configure Audacity
 cmake "${cmake_args[@]}"
+
+if [[ "${OSTYPE}" == msys* ]]; then # Windows
+    # On Windows, preserve PDB files before clearing the build cache
+    
+    conanUnixPath=$(cygpath ${CONAN_USER_HOME})
+    pdbOutputPath="${conanUnixPath}/pdbs"
+
+    ls -la ${conanUnixPath}
+
+    mkdir -p "${pdbOutputPath}"
+    find "${conanUnixPath}/.conan" -name '*.pdb' '!' -name "vc14?.pdb" -type f | xargs -I % cp -v % ${pdbOutputPath}
+elif [[ "${OSTYPE}" == darwin* ]]; then # macOS
+    # On macOS - find all the .dylib files and generate dSYMs from them 
+    # in the same folder.
+    # dsymutil requires *.o files, so we need to generate files before clearing
+    # the build directories.
+
+    chmod +x scripts/ci/macos/generate_dsym.sh
+    scripts/ci/macos/generate_dsym.sh
+fi
 
 # Remove build directories and sources to reduce the cache size.
 conan remove "*" --src --builds --force

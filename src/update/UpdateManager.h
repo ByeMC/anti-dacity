@@ -13,15 +13,17 @@
 #include "UpdateDataParser.h"
 
 #include "Prefs.h"
+#include "BasicUI.h"
 
 #include <wx/string.h>
 #include <wx/event.h>
 #include <wx/timer.h>
+#include <wx/progdlg.h>
 
-namespace UpdatesCheckingSettings {
-    extern AUDACITY_DLL_API BoolSetting DefaultUpdatesCheckingFlag;
-}
-
+#include <iostream>
+#include <fstream>
+#include <mutex>
+ 
 /// A class that managing of updates.
 /**
     Opt-in request and show update dialog by the scheduled time.
@@ -31,13 +33,12 @@ namespace UpdatesCheckingSettings {
 class UpdateManager final : public wxEvtHandler
 {
 public:
-    UpdateManager();
-    ~UpdateManager();
+    UpdateManager() = default;
 
     static UpdateManager& GetInstance();
     static void Start();
 
-    void GetUpdates();
+    void GetUpdates(bool ignoreNetworkErrors);
 
     VersionPatch GetVersionPatch() const;
 
@@ -46,13 +47,19 @@ private:
     VersionPatch mVersionPatch;
 
     wxTimer mTimer;
-    const int mUpdateCheckingInterval;
 
     void OnTimer(wxTimerEvent& event);
 
     /// Scheduling update time for avoiding multiplying update notifications.
     bool IsTimeForUpdatesChecking();
 
+    std::unique_ptr<BasicUI::ProgressDialog> mProgressDialog;
+
+    std::string mAudacityInstallerPath;
+    std::ofstream mAudacityInstaller;
+    
+    std::mutex mUpdateMutex;
+    bool mOnProgress{ false };
 public:
     DECLARE_EVENT_TABLE()
 };

@@ -14,18 +14,18 @@
 
 #include "Identifier.h"
 
-#include "../ClientData.h"
+#include "ClientData.h"
 #include "CommandFunctors.h"
 #include "CommandFlag.h"
 
 #include "Keyboard.h"
 
-#include "../Prefs.h"
-#include "../Registry.h"
+#include "Prefs.h"
+#include "Registry.h"
 
 #include <vector>
 
-#include "../xml/XMLTagHandler.h"
+#include "XMLTagHandler.h"
 
 #include <unordered_map>
 

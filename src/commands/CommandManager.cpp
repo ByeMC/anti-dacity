@@ -82,6 +82,7 @@ CommandManager.  It holds the callback for one command.
 #include "CommandContext.h"
 #include "CommandManagerWindowClasses.h"
 
+#include <wx/app.h>
 #include <wx/defs.h>
 #include <wx/evtloop.h>
 #include <wx/frame.h>
@@ -91,6 +92,7 @@ CommandManager.  It holds the callback for one command.
 #include <wx/menu.h>
 #include <wx/tokenzr.h>
 
+#include "../Journal.h"
 #include "../Menus.h"
 
 #include "../Project.h"
@@ -1182,6 +1184,33 @@ bool CommandManager::FilterKeyEvent(AudacityProject *project, const wxKeyEvent &
    return false;
 }
 
+namespace {
+
+constexpr auto JournalCode = wxT("CM");  // for CommandManager
+
+// Register a callback for the journal
+Journal::RegisteredCommand sCommand{ JournalCode,
+[]( const wxArrayString &fields )
+{
+   // Expect JournalCode and the command name.
+   // To do, perhaps, is to include some parameters.
+   bool handled = false;
+   if ( fields.size() == 2 ) {
+      auto project = GetActiveProject();
+      if (project) {
+         auto pManager = &CommandManager::Get( *project );
+         auto flags = MenuManager::Get( *project ).GetUpdateFlags();
+         const CommandContext context( *project );
+         auto &command = fields[1];
+         handled =
+            pManager->HandleTextualCommand( command, context, flags, false );
+      }
+   }
+   return handled;
+}
+};
+
+}
 
 /// HandleCommandEntry() takes a CommandListEntry and executes it
 /// returning true iff successful.  If you pass any flags,
@@ -1215,6 +1244,8 @@ bool CommandManager::HandleCommandEntry(AudacityProject &project,
    else {
       mNiceName = {};
    }
+
+   Journal::Output({ JournalCode, entry->name.GET() });
 
    const CommandContext context{ project, evt, entry->index, entry->parameter };
    auto &handler = entry->finder(project);

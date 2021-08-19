@@ -470,12 +470,13 @@ time warp info and AudioIOListener and whether the playback is looped.
 #include "prefs/RecordingPrefs.h"
 #include "widgets/MeterPanelBase.h"
 #include "widgets/AudacityMessageBox.h"
-#include "widgets/ErrorDialog.h"
+#include "BasicUI.h"
 
 #ifdef EXPERIMENTAL_MIDI_OUT
 
-#include "../lib-src/portmidi/pm_common/portmidi.h"
-#include "../lib-src/portmidi/porttime/porttime.h"
+#include <portmidi.h>
+#include <porttime.h>
+
 #include "../lib-src/header-substitutes/allegro.h"
 
    #define MIDI_SLEEP 10 /* milliseconds */
@@ -488,15 +489,115 @@ time warp info and AudioIOListener and whether the playback is looped.
       #define THREAD_LATENCY 0 /* milliseconds */
    #endif
    #define ROUND(x) (int) ((x)+0.5)
-   //#include <string.h>
-//   #include "../lib-src/portmidi/pm_common/portmidi.h"
-   #include "../lib-src/portaudio-v19/src/common/pa_util.h"
    #include "NoteTrack.h"
 #endif
 
 #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
    #define LOWER_BOUND 0.0
    #define UPPER_BOUND 1.0
+#endif
+
+/*
+ Adapt and rename the implementation of PaUtil_GetTime from commit
+ c5d2c51bd6fe354d0ee1119ba932bfebd3ebfacc of portaudio
+ */
+#if defined( __APPLE__ )
+
+#include <mach/mach_time.h>
+
+/* Scaler to convert the result of mach_absolute_time to seconds */
+static double machSecondsConversionScaler_ = 0.0;
+
+/* Initialize it */
+static struct InitializeTime { InitializeTime() {
+   mach_timebase_info_data_t info;
+   kern_return_t err = mach_timebase_info( &info );
+   if( err == 0  )
+       machSecondsConversionScaler_ = 1e-9 * (double) info.numer / (double) info.denom;
+} } initializeTime;
+
+static PaTime util_GetTime( void )
+{
+   return mach_absolute_time() * machSecondsConversionScaler_;
+}
+
+#elif defined( __WXMSW__ )
+
+#include "profileapi.h"
+#include "sysinfoapi.h"
+#include "timeapi.h"
+
+static int usePerformanceCounter_;
+static double secondsPerTick_;
+
+static struct InitializeTime { InitializeTime() {
+    LARGE_INTEGER ticksPerSecond;
+
+    if( QueryPerformanceFrequency( &ticksPerSecond ) != 0 )
+    {
+        usePerformanceCounter_ = 1;
+        secondsPerTick_ = 1.0 / (double)ticksPerSecond.QuadPart;
+    }
+    else
+    {
+        usePerformanceCounter_ = 0;
+    }
+} } initializeTime;
+
+static double util_GetTime( void )
+{
+    LARGE_INTEGER time;
+
+    if( usePerformanceCounter_ )
+    {
+        /*
+            Note: QueryPerformanceCounter has a known issue where it can skip forward
+            by a few seconds (!) due to a hardware bug on some PCI-ISA bridge hardware.
+            This is documented here:
+            http://support.microsoft.com/default.aspx?scid=KB;EN-US;Q274323&
+
+            The work-arounds are not very paletable and involve querying GetTickCount
+            at every time step.
+
+            Using rdtsc is not a good option on multi-core systems.
+
+            For now we just use QueryPerformanceCounter(). It's good, most of the time.
+        */
+        QueryPerformanceCounter( &time );
+        return time.QuadPart * secondsPerTick_;
+    }
+    else
+    {
+	#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
+        return GetTickCount64() * .001;
+	#else
+        return timeGetTime() * .001;
+	#endif
+    }
+}
+
+#elif defined(HAVE_CLOCK_GETTIME)
+
+#include <time.h>
+
+static PaTime util_GetTime( void )
+{
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    return (PaTime)(tp.tv_sec + tp.tv_nsec * 1e-9);
+}
+
+#else
+
+#include <sys/time.h>
+
+static PaTime util_GetTime( void )
+{
+    struct timeval tv;
+    gettimeofday( &tv, NULL );
+    return (PaTime) tv.tv_usec * 1e-6 + tv.tv_sec;
+}
+
 #endif
 
 using std::max;
@@ -828,7 +929,7 @@ static double SystemTime(bool usingAlsa)
    static_cast<void>(usingAlsa);//compiler food.
 #endif
 
-   return PaUtil_GetTime() - streamStartTime;
+   return util_GetTime() - streamStartTime;
 }
 #endif
 
@@ -1461,10 +1562,12 @@ void AudioIO::StartMonitoring( const AudioIOStartStreamOptions &options )
                                   captureFormat);
 
    if (!success) {
+      using namespace BasicUI;
       auto msg = XO("Error opening recording device.\nError code: %s")
          .Format( Get()->LastPaErrorString() );
-      ShowExceptionDialog( FindProjectFrame( mOwningProject ),
-         XO("Error"), msg, wxT("Error_opening_sound_device"));
+      ShowErrorDialog( *ProjectFramePlacement( mOwningProject ),
+         XO("Error"), msg, wxT("Error_opening_sound_device"),
+         ErrorDialogOptions{ ErrorDialogType::ModalErrorReport } );
       return;
    }
 
@@ -1823,6 +1926,44 @@ int AudioIO::StartStream(const TransportTracks &tracks,
    return mStreamToken;
 }
 
+void AudioIO::DelayActions(bool recording)
+{
+   mDelayingActions = recording;
+}
+
+bool AudioIO::DelayingActions() const
+{
+   return mDelayingActions || (mPortStreamV19 && mNumCaptureChannels > 0);
+}
+
+void AudioIO::CallAfterRecording(PostRecordingAction action)
+{
+   if (!action)
+      return;
+
+   {
+      std::lock_guard<std::mutex> guard{ mPostRecordingActionMutex };
+      if (mPostRecordingAction) {
+         // Enqueue it, even if perhaps not still recording,
+         // but it wasn't cleared yet
+         mPostRecordingAction = [
+            prevAction = std::move(mPostRecordingAction),
+            nextAction = std::move(action)
+         ]{ prevAction(); nextAction(); };
+         return;
+      }
+      else if (DelayingActions()) {
+         mPostRecordingAction = std::move(action);
+         return;
+      }
+   }
+
+   // Don't delay it except until idle time.
+   // (Recording might start between now and then, but won't go far before
+   // the action is done.  So the system isn't bulletproof yet.)
+   wxTheApp->CallAfter(std::move(action));
+}
+
 bool AudioIO::AllocateBuffers(
    const AudioIOStartStreamOptions &options,
    const TransportTracks &tracks, double t0, double t1, double sampleRate,
@@ -2170,12 +2311,23 @@ void AudioIO::StopStream()
      )
       return;
 
-   if( Pa_IsStreamStopped( mPortStreamV19 )
+   // DV: This code seems to be unnecessary.
+   // We do not leave mPortStreamV19 open in stopped 
+   // state. (Do we?)
+   // This breaks WASAPI backend, as it sets the `running`
+   // flag to `false` asynchronously. 
+   // Previously we have patched PortAudio and the patch
+   // was breaking IsStreamStopped() == !IsStreamActive()
+   // invariant.
+   /*
+   if (
+      Pa_IsStreamStopped(mPortStreamV19)
 #ifdef EXPERIMENTAL_MIDI_OUT
        && !mMidiStreamActive
 #endif
      )
       return;
+   */
 
 #if (defined(__WXMAC__) || defined(__WXMSW__)) && wxCHECK_VERSION(3,1,0)
    // Re-enable system sleep
@@ -2227,6 +2379,8 @@ void AudioIO::StopStream()
    // call StopStream if the callback brought us here, and AbortStream
    // if the user brought us here.
    //
+   // DV: Seems that Pa_CloseStream calls Pa_AbortStream internally,
+   // at least for PortAudio 19.7.0+
 
    mAudioThreadFillBuffersLoopRunning = false;
 
@@ -2255,8 +2409,14 @@ void AudioIO::StopStream()
   #endif
 
    if (mPortStreamV19) {
-      Pa_AbortStream( mPortStreamV19 );
+      // DV: Pa_CloseStream will close Pa_AbortStream internally,
+      // but it doesn't hurt to do it ourselves.
+      // PA_AbortStream will silently fail if stream is stopped.
+      if (!Pa_IsStreamStopped( mPortStreamV19 ))
+        Pa_AbortStream( mPortStreamV19 );
+
       Pa_CloseStream( mPortStreamV19 );
+
       mPortStreamV19 = NULL;
    }
 
@@ -2415,6 +2575,21 @@ void AudioIO::StopStream()
 
    if (pListener && mNumCaptureChannels > 0)
       pListener->OnAudioIOStopRecording();
+
+   wxTheApp->CallAfter([this]{
+      if (mPortStreamV19 && mNumCaptureChannels > 0)
+         // Recording was restarted between StopStream and idle time
+         // So the actions can keep waiting
+         return;
+      // In case some other thread was waiting on the mutex too:
+      std::this_thread::yield();
+      std::lock_guard<std::mutex> guard{ mPostRecordingActionMutex };
+      if (mPostRecordingAction) {
+         mPostRecordingAction();
+         mPostRecordingAction = {};
+      }
+      DelayActions(false);
+   });
 
    //
    // Only set token to 0 after we're totally finished with everything

@@ -17,9 +17,9 @@
 #include <wx/tokenzr.h> // for enum wxStringTokenizerMode
 
 #include "../widgets/wxPanelWrapper.h" // to inherit
-#include "../FileNames.h" // for FileType
+#include "FileNames.h" // for FileType
 
-#include "../Registry.h"
+#include "Registry.h"
 
 class wxArrayString;
 class wxListBox;
